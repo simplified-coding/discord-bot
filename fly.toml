@@ -7,9 +7,13 @@ app = "sc-discord"
 primary_region = "cdg"
 
 [http_service]
-  internal_port = 8080
+  internal_port = 3030
   force_https = true
-  auto_stop_machines = true
+  auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 0
   processes = ["app"]
+
+[metrics]
+  port = 9091 # default for most prometheus clients
+  path = "/" # default for most prometheus clients
