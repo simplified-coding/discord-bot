@@ -1,15 +1,28 @@
 import os
 import discord
-import datetime
-
-from utils import has_admin
-
-# Load .env file
-from dotenv import load_dotenv
-load_dotenv()
+import datetime, threading, time
+from utils import has_admin, calculateTime
+from metrics import prometheus
+from prometheus_client import Counter, Histogram
 
 # Constants
 GUILD = discord.Object(id=os.environ.get('DISCORD_GUILDID'))
+
+prometheus()
+started = Counter('started', '# of times the discord bot has been started')
+
+commandCount = Counter('command_count', '# of commands that have been executed')
+commandPing = Counter('command_ping', '# of times the, ping, command has been executed')
+commandGetChannelID = Counter('command_channelid', '# of thimes the, get channel id, command has been executed')
+commandBulkDelete = Counter('command_bulkdelete', '# of times the, bulk delete, command has been executed')
+commandPoll = Counter('command_poll', '# of times the, poll, command has been executed')
+commandNoauth = Counter('command_noauth', '# of times a command has been run without the proper autorisation')
+commandBadData = Counter('command_baddata', '# of times a command has been run without the proper data')
+
+latencyCommandPing = Histogram('command_ping_latency', 'Latency of /ping, in ms')
+latencyCommandGetChannelID = Histogram('command_channelid_latency', 'Latency of /get_channel_id, in ms')
+latencyCommandBulkDelete = Histogram('command_bulkdelete_latency', 'Latency of /bulk_delete, in ms')
+latencyCommandPoll = Histogram('command_poll_latency', 'Latency of /poll, in ms')
 
 class DiscordClient(discord.Client):
     # Init
@@ -36,35 +49,59 @@ bot_intents = discord.Intents.default()
 client = DiscordClient(intents=bot_intents)
 
 # Add Bot Commands
-
 # Ping Command
 @client.tree.command(description='Pings the Simplified Coding discord bot.')
 async def ping(interaction: discord.Interaction):
+    commandCount.inc()
+    commandPing.inc()
+
+    s = time.time()
     await interaction.response.send_message(f"Pong! {round(client.latency * 1000)}ms", ephemeral=True)
+    e = time.time()
+    latencyCommandPing.observe(calculateTime(s, e))
 
 # Get Channel ID
 @client.tree.command(description='Gets the channel ID.')
 async def get_channel_id(interaction: discord.Interaction):
+    commandCount.inc()
+    commandGetChannelID.inc()
+
+    s = time.time()
     await interaction.response.send_message(f'Channel ID: `{interaction.channel_id}`', ephemeral=True)
+    e = time.time()
+    latencyCommandGetChannelID.observe(calculateTime(s, e))
 
 # Bulk Delete Command
 @client.tree.command(description='[ADMIN] Bulk deletes up to 100 messages.')
 @discord.app_commands.describe(message_count='How many messages to delete')
 async def bulk_delete(interaction: discord.Interaction, message_count: int):
+    commandCount.inc()
+    commandBulkDelete.inc()
+
+    s = time.time()
     if message_count > 100:
+        commandBadData.inc()
         await interaction.response.send_message('Bulk delete limit is 100 messages.', ephemeral=True)
     else:
         if has_admin(interaction=interaction):
             await interaction.response.send_message(f'Deleting {message_count} messages.', ephemeral=True)
             await interaction.channel.delete_messages([message async for message in interaction.channel.history(limit=message_count)])
         else:
+            commandNoauth.inc()
             await client.get_channel(int(os.environ.get('DISCORD_ADMIN_CHANNELID'))).send(content=f'{interaction.user} tried to run {interaction.command.name} that requires **ADMIN** access, which **he does not have**. **SHAME HIM!**')
             await interaction.response.send_message(f'{interaction.user} does not have admin access!', ephemeral=True)
+    e = time.time()
+    latencyCommandBulkDelete.observe(calculateTime(s, e))
 
 # Poll Command
 @client.tree.command(description='Create a poll')
 @discord.app_commands.describe(poll_name='The name of the poll', poll_desc='The poll description', option_a='Option A', option_b='Option B', option_c='Option C', option_d='Option D', option_e='Option E', option_f='Option F')
 async def create_poll(interaction: discord.Interaction, poll_name: str, poll_desc: str, option_a: str = None, option_b: str = None, option_c: str = None, option_d: str = None, option_e: str = None, option_f: str = None):
+    commandCount.inc()
+    commandPoll.inc()
+
+    s = time.time()
+
     embed_description = f'{poll_desc}\n\nOptions avainable to vote:\n\n' # Create the embed description
 
     # Add all of the vote options
@@ -90,5 +127,11 @@ async def create_poll(interaction: discord.Interaction, poll_name: str, poll_des
     if option_e: await response_message.add_reaction('🇪')
     if option_f: await response_message.add_reaction('🇫')
 
+    e = time.time()
+    latencyCommandPoll.observe(calculateTime(s, e))
+
 # Run Discord Bot
-client.run(os.environ.get('DISCORD_TOKEN'))
+if __name__ == "__main__":
+    # Running Discord Bot
+    started.inc()
+    client.run(os.environ.get('DISCORD_TOKEN'))
